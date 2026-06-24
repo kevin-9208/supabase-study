@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>协作待办</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f4; color: #1c1c1a; }
+  
+  #auth-page { max-width: 360px; margin: 80px auto; padding: 32px;
+    background: #fff; border-radius: 12px; border: 0.5px solid #e0ddd5; }
+  #auth-page h1 { font-size: 18px; font-weight: 500; margin-bottom: 20px; }
+  input { width: 100%; padding: 9px 12px; border: 0.5px solid #ccc;
+    border-radius: 8px; font-size: 14px; margin-bottom: 10px; }
+  button { width: 100%; padding: 9px; background: #1c1c1a; color: #fff;
+    border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+  button:hover { opacity: 0.85; }
+
+  #app { display: none; max-width: 680px; margin: 0 auto; padding: 24px; }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .header h2 { font-size: 16px; font-weight: 500; }
+  .logout-btn { padding: 6px 14px; background: transparent;
+    border: 0.5px solid #ccc; border-radius: 8px; color: #666;
+    font-size: 13px; width: auto; }
+
+  .add-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .add-row input { margin: 0; flex: 1; }
+  .add-row button { width: auto; padding: 9px 18px; }
+
+  .todo-list { display: flex; flex-direction: column; gap: 6px; }
+  .todo-item { display: flex; align-items: center; gap: 10px;
+    background: #fff; border: 0.5px solid #e0ddd5; border-radius: 10px;
+    padding: 12px 14px; transition: opacity 0.2s; }
+  .todo-item.done { opacity: 0.5; }
+  .todo-item.done .todo-title { text-decoration: line-through; color: #888; }
+  .todo-title { flex: 1; font-size: 14px; }
+  .todo-meta { font-size: 12px; color: #999; white-space: nowrap; }
+  .delete-btn { background: transparent; border: none; color: #bbb;
+    font-size: 16px; cursor: pointer; width: auto; padding: 0 4px; }
+  .delete-btn:hover { color: #e24b4a; }
+
+  .priority-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .p0 { background: #d3d1c7; }
+  .p1 { background: #EF9F27; }
+  .p2 { background: #E24B4A; }
+
+  .realtime-badge { display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; color: #0F6E56; background: #E1F5EE;
+    padding: 3px 9px; border-radius: 20px; }
+  .realtime-dot { width: 6px; height: 6px; border-radius: 50%; background: #1D9E75;
+    animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .ws-selector { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; }
+  .ws-selector select { flex: 1; padding: 8px 10px; border: 0.5px solid #ccc;
+    border-radius: 8px; font-size: 14px; background: #fff; }
+  .ws-selector button { width: auto; padding: 8px 14px; }
+</style>
+</head>
+<body>
+
+<!-- 登录页 -->
+<div id="auth-page">
+  <h1>协作待办</h1>
+  <input id="email" type="email" placeholder="邮箱">
+  <input id="password" type="password" placeholder="密码">
+  <button onclick="signIn()">登录 / 注册</button>
+  <p id="auth-msg" style="font-size:13px;color:#888;margin-top:10px;text-align:center"></p>
+</div>
+
+<!-- 主应用 -->
+<div id="app">
+  <div class="header">
+    <h2>协作待办</h2>
+    <span class="realtime-badge">
+      <span class="realtime-dot"></span>实时同步
+    </span>
+    <button class="logout-btn" onclick="signOut()">退出</button>
+  </div>
+
+  <div class="ws-selector">
+    <select id="ws-select" onchange="switchWorkspace()">
+      <option value="">— 选择工作区 —</option>
+    </select>
+    <button onclick="createWorkspace()">+ 新建</button>
+  </div>
+
+  <div class="add-row">
+    <input id="new-todo" placeholder="添加任务，按 Enter 提交"
+      onkeydown="if(event.key==='Enter') addTodo()">
+    <button onclick="addTodo()">添加</button>
+  </div>
+
+  <div class="todo-list" id="todo-list">
+    <p style="color:#aaa;font-size:14px;text-align:center;padding:20px">
+      先选择或创建一个工作区
+    </p>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://你的项目.supabase.co'
+const SUPABASE_KEY = '你的 anon key'
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+
+let currentUser = null
+let currentWorkspace = null
+let realtimeChannel = null
+
+// ── 认证 ──────────────────────────────────────
+async function signIn() {
+  const email = document.getElementById('email').value
+  const password = document.getElementById('password').value
+
+  // 先尝试登录，失败则注册
+  let { data, error } = await sb.auth.signInWithPassword({ email, password })
+  if (error) {
+    ;({ data, error } = await sb.auth.signUp({ email, password }))
+    if (error) { document.getElementById('auth-msg').textContent = error.message; return }
+    document.getElementById('auth-msg').textContent = '注册成功，请查收确认邮件'
+    return
+  }
+  onLogin(data.user)
+}
+
+async function signOut() {
+  await sb.auth.signOut()
+  currentUser = null
+  currentWorkspace = null
+  if (realtimeChannel) sb.removeChannel(realtimeChannel)
+  document.getElementById('app').style.display = 'none'
+  document.getElementById('auth-page').style.display = 'block'
+}
+
+function onLogin(user) {
+  currentUser = user
+  document.getElementById('auth-page').style.display = 'none'
+  document.getElementById('app').style.display = 'block'
+  loadWorkspaces()
+}
+
+// 页面加载时恢复会话
+sb.auth.getSession().then(({ data: { session } }) => {
+  if (session) onLogin(session.user)
+})
+
+// ── 工作区 ────────────────────────────────────
+async function loadWorkspaces() {
+  const { data } = await sb
+    .from('workspaces')
+    .select('id, name')
+    .order('created_at')
+
+  const sel = document.getElementById('ws-select')
+  sel.innerHTML = '<option value="">— 选择工作区 —</option>'
+  data?.forEach(ws => {
+    const opt = document.createElement('option')
+    opt.value = ws.id
+    opt.textContent = ws.name
+    sel.appendChild(opt)
+  })
+  // 自动选中第一个
+  if (data?.length) {
+    sel.value = data[0].id
+    switchWorkspace()
+  }
+}
+
+async function createWorkspace() {
+  const name = prompt('工作区名称（可邀请成员共用）')
+  if (!name) return
+  const { data, error } = await sb
+    .from('workspaces')
+    .insert({ name, owner_id: currentUser.id })
+    .select()
+    .single()
+  if (error) { alert(error.message); return }
+
+  // 创建者自动成为 owner 成员
+  await sb.from('workspace_members').insert({
+    workspace_id: data.id,
+    user_id: currentUser.id,
+    role: 'owner'
+  })
+  loadWorkspaces()
+}
+
+function switchWorkspace() {
+  const id = document.getElementById('ws-select').value
+  if (!id) return
+  currentWorkspace = id
+  loadTodos()
+  subscribeRealtime()
+}
+
+// ── 任务 CRUD ─────────────────────────────────
+async function loadTodos() {
+  const { data } = await sb
+    .from('todos')
+    .select(`
+      id, title, is_done, priority, due_at, created_at,
+      profiles!todos_assigned_to_fkey(display_name, email)
+    `)
+    .eq('workspace_id', currentWorkspace)
+    .order('is_done')
+    .order('priority', { ascending: false })
+    .order('created_at')
+
+  renderTodos(data || [])
+}
+
+function renderTodos(todos) {
+  const list = document.getElementById('todo-list')
+  if (!todos.length) {
+    list.innerHTML = '<p style="color:#aaa;font-size:14px;text-align:center;padding:20px">还没有任务，添加一个吧</p>'
+    return
+  }
+  list.innerHTML = todos.map(t => `
+    <div class="todo-item ${t.is_done ? 'done' : ''}" id="todo-${t.id}">
+      <span class="priority-dot p${t.priority}"></span>
+      <input type="checkbox" ${t.is_done ? 'checked' : ''}
+        onchange="toggleTodo('${t.id}', this.checked)">
+      <span class="todo-title">${escHtml(t.title)}</span>
+      <span class="todo-meta">
+        ${t.profiles?.display_name || t.profiles?.email?.split('@')[0] || '未指派'}
+      </span>
+      <button class="delete-btn" onclick="deleteTodo('${t.id}')">×</button>
+    </div>
+  `).join('')
+}
+
+async function addTodo() {
+  const input = document.getElementById('new-todo')
+  const title = input.value.trim()
+  if (!title || !currentWorkspace) return
+
+  const { error } = await sb.from('todos').insert({
+    workspace_id: currentWorkspace,
+    created_by: currentUser.id,
+    title
+  })
+  if (error) { alert(error.message); return }
+  input.value = ''
+  // Realtime 会自动触发重新渲染，无需手动 reload
+}
+
+async function toggleTodo(id, isDone) {
+  await sb.from('todos').update({ is_done: isDone }).eq('id', id)
+}
+
+async function deleteTodo(id) {
+  await sb.from('todos').delete().eq('id', id)
+}
+
+// ── 实时订阅（核心） ───────────────────────────
+function subscribeRealtime() {
+  // 先取消上一个频道
+  if (realtimeChannel) sb.removeChannel(realtimeChannel)
+
+  realtimeChannel = sb
+    .channel(`todos:${currentWorkspace}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',          // INSERT | UPDATE | DELETE
+        schema: 'public',
+        table: 'todos',
+        filter: `workspace_id=eq.${currentWorkspace}`
+      },
+      (payload) => {
+        // 任何变更都重新拉一次列表
+        // 生产环境可根据 payload.eventType 做局部更新，减少请求
+        loadTodos()
+      }
+    )
+    .subscribe()
+}
+
+// ── 工具函数 ──────────────────────────────────
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+}
+</script>
+</body>
+</html>
