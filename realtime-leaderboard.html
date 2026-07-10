@@ -354,18 +354,32 @@
     if(!name){ nameInput.focus(); return; }
     joinBtn.disabled = true;
 
-    // 简化处理：直接插入一条新记录作为当前玩家（每次点击 JOIN 都是新玩家）
-    // 生产环境应结合 supabase auth，用 user_id 关联，避免重复
-    const { data, error } = await sb
+    // 先查是否已有同名玩家，有则复用，没有才新建
+    const { data: existing, error: findErr } = await sb
       .from('leaderboard')
-      .insert({ username: name, score: 0 })
-      .select()
-      .single();
+      .select('*')
+      .eq('username', name)
+      .maybeSingle();
 
-    if(error){
-      setStatus('', 'insert failed: ' + error.message);
+    if(findErr){
+      setStatus('', 'lookup failed: ' + findErr.message);
       joinBtn.disabled = false;
       return;
+    }
+
+    let data = existing;
+    if(!data){
+      const { data: inserted, error: insertErr } = await sb
+        .from('leaderboard')
+        .insert({ username: name, score: 0 })
+        .select()
+        .single();
+      if(insertErr){
+        setStatus('', 'insert failed: ' + insertErr.message);
+        joinBtn.disabled = false;
+        return;
+      }
+      data = inserted;
     }
 
     myPlayerId = data.id;
