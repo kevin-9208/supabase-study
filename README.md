@@ -1,5 +1,7 @@
 # Supabase Realtime 功能详解
 
+在线的用户实时排行榜的简单小demo的网址 [https://realtime-leaderboard-rho.vercel.app/]
+
 ## 概述
 
 Supabase Realtime 是一个全球分布式的实时通信服务，让应用能够即时展示数据变化，而无需频繁轮询 API。Realtime 允许应用即时显示实时更新，而不需要频繁发起 API 调用——例如在一个消息量很大的聊天窗口中，每隔几秒轮询一次接口去检查新消息是低效的。
