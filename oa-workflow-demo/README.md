@@ -7,7 +7,7 @@ Vue3 + Element Plus + Supabase（Postgres + Auth + RLS）。
 
 ## 一、Supabase 端准备
 
-1. 在 [supabase.com](https://supabase.com) 新建一个项目（或使用已有项目）。
+1. 在使用已有项目(谷歌浏览器supabase - dataBank)。
 2. 打开 SQL Editor，把 `supabase/migrations/0001_init.sql` 的全部内容粘贴进去并执行。
    - 这一步会创建：`profiles / leave_requests / workflow_instances /
      workflow_instance_nodes / approval_tasks / approval_records / notifications`
